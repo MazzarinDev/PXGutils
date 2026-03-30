@@ -142,7 +142,7 @@ export default function Home() {
             className="bg-indigo-600 hover:bg-indigo-700 text-white"
             onClick={() => (window.location.href = getLoginUrl())}
           >
-            Entrar com Manus
+            Entrar
           </Button>
         </div>
       </div>

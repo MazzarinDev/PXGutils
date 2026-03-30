@@ -154,7 +154,7 @@ Acesse `http://localhost:3000` no seu navegador.
 - **Frontend:** React 19 + Tailwind CSS 4 + shadcn/ui
 - **Backend:** Express 4 + tRPC 11
 - **Database:** MySQL/TiDB + Drizzle ORM
-- **Auth:** Manus OAuth
+- **Auth:** OAuth (genérico)
 - **Build:** Vite 7
 - **Testing:** Vitest 2
 
@@ -177,7 +177,7 @@ users (autenticação)
 
 ## 🔒 Segurança
 
-- **Autenticação:** OAuth via Manus (sem armazenamento de senhas)
+- **Autenticação:** OAuth (sem armazenamento de senhas)
 - **Autorização:** RBAC (Role-Based Access Control)
 - **Validação:** Zod em todas as procedures tRPC
 - **SQL Injection:** Prevenção via ORM
@@ -284,13 +284,13 @@ Edite `client/src/index.css` e modifique as variáveis CSS:
 
 ## 🚀 Deploy
 
-### Manus Hosting (Recomendado)
+### Deploy em Produção
 
-O PXGManager está pronto para deploy no **Manus Hosting**:
+O PXGManager pode ser deployado em qualquer plataforma que suporte Node.js:
 
-1. Clique em **"Publish"** no painel de controle
-2. Configure seu domínio customizado (opcional)
-3. Clique em **"Deploy"**
+1. Configure suas variáveis de ambiente
+2. Execute `pnpm build` para gerar o build otimizado
+3. Inicie com `pnpm start` ou `node dist/index.js`
 
 ### Outros Hosts
 
@@ -355,7 +355,7 @@ Este projeto está licenciado sob a [MIT License](./LICENSE).
 ## 🙏 Agradecimentos
 
 - Comunidade PokeXgames
-- Equipe Manus
+- Comunidade open-source
 - Contribuidores e testadores
 
 ---

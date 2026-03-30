@@ -84,5 +84,5 @@
 ## Notes
 - Direção visual: Elegant and perfect style com temática MMORPG
 - Stack: React 19 + Tailwind 4 + Express 4 + tRPC 11 + MySQL
-- Autenticação: Manus OAuth
+- Autenticação: OAuth genérico
 - Foco em experiência do usuário e coordenação em tempo real

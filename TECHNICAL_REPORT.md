@@ -36,7 +36,7 @@ O sistema suporta **alarmes e notificações** para eventos cronometrados críti
 | **API Protocol** | tRPC | 11.6.0 |
 | **Database** | MySQL/TiDB | - |
 | **ORM** | Drizzle ORM | 0.44.5 |
-| **Authentication** | Manus OAuth | - |
+| **Authentication** | OAuth (genérico) | - |
 | **Build Tool** | Vite | 7.1.7 |
 | **Testing** | Vitest | 2.1.4 |
 
@@ -378,7 +378,7 @@ pxg-manager/
 
 ### 8.1 Autenticação
 
-- OAuth via Manus (não armazena senhas)
+- OAuth (não armazena senhas)
 - Session cookies com HTTPS
 - CSRF protection via SameSite cookies
 
