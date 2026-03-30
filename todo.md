@@ -57,26 +57,26 @@
 - [x] Polir componentes com ícones temáticos
 
 ### Phase 7: Advanced Features
-- [ ] Implementar sistema de tags personalizáveis
-- [ ] Criar sistema de categorias customizáveis
-- [ ] Adicionar suporte a múltiplas guildas por usuário
+- [x] Implementar sistema de tags personalizáveis
+- [x] Criar sistema de categorias customizáveis
+- [x] Adicionar suporte a múltiplas guildas por usuário
 - [ ] Implementar sincronização em tempo real (WebSocket)
 - [ ] Adicionar exportação de relatórios (CSV/PDF)
 - [ ] Implementar dark mode toggle
 
 ### Phase 8: Testing & Documentation
-- [ ] Escrever testes vitest para componentes críticos
-- [ ] Testar fluxos de autenticação e permissões
-- [ ] Testar drag-and-drop do Kanban
-- [ ] Testar sistema de alarmes e notificações
-- [ ] Criar documentação de uso para jogadores
-- [ ] Criar documentação técnica para desenvolvedores
+- [x] Escrever testes vitest para componentes críticos
+- [x] Testar fluxos de autenticação e permissões
+- [x] Testar drag-and-drop do Kanban
+- [x] Testar sistema de alarmes e notificações
+- [x] Criar documentação de uso para jogadores
+- [x] Criar documentação técnica para desenvolvedores
 
 ### Phase 9: Deployment & Finalization
-- [ ] Criar checkpoint final do projeto
-- [ ] Redigir relatório técnico de 70h (outubro 2025, MazzarinDev)
-- [ ] Preparar repositório GitHub com README e documentação
-- [ ] Solicitar token GitHub para publicação
+- [x] Criar checkpoint final do projeto
+- [x] Redigir relatório técnico de 70h (outubro 2025, MazzarinDev)
+- [x] Preparar repositório GitHub com README e documentação
+- [x] Solicitar token GitHub para publicação
 
 ## Bugs & Fixes
 (Nenhum registrado ainda)
