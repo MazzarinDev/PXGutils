@@ -1,316 +1,414 @@
 import { z } from "zod";
-import { COOKIE_NAME } from "@shared/const";
-import { getSessionCookieOptions } from "./_core/cookies";
-import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import * as db from "./db";
-import { TRPCError } from "@trpc/server";
+import { publicProcedure, router } from "./_core/trpc";
+import { getDb } from "./db";
+import { users, guilds, guildMembers, tasks, taskCategories, alarms, notifications } from "../drizzle/schema";
+import { eq, and, desc } from "drizzle-orm";
 
-// ============ VALIDATION SCHEMAS ============
+/**
+ * Character-based authentication router
+ * Login is based on character name only (e.g., "Kooxh")
+ */
+export const authRouter = router({
+  // Login or create user by character name
+  login: publicProcedure
+    .input(z.object({
+      characterName: z.string().min(1).max(64),
+      level: z.number().int().min(1).optional(),
+      class: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
 
-const createGuildSchema = z.object({
-  name: z.string().min(1).max(128),
-  description: z.string().optional(),
+      try {
+        const existing = await db
+          .select()
+          .from(users)
+          .where(eq(users.characterName, input.characterName))
+          .limit(1);
+
+        if (existing.length > 0) {
+          // Update last signed in
+          await db
+            .update(users)
+            .set({ lastSignedIn: new Date() })
+            .where(eq(users.id, existing[0].id));
+          return existing[0];
+        }
+
+        // Create new user - insert and return
+        const result = await db.insert(users).values({
+          characterName: input.characterName,
+          level: input.level || 1,
+          class: input.class,
+          experience: 0,
+        });
+
+        const newUser = await db
+          .select()
+          .from(users)
+          .where(eq(users.id, Number(result.insertId)))
+          .limit(1);
+
+        return newUser[0];
+      } catch (error) {
+        console.error("Login error:", error);
+        throw new Error("Failed to login");
+      }
+    }),
+
+  // Get current user by character name
+  me: publicProcedure
+    .input(z.object({ characterName: z.string() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) return null;
+
+      const result = await db
+        .select()
+        .from(users)
+        .where(eq(users.characterName, input.characterName))
+        .limit(1);
+
+      return result[0] || null;
+    }),
+
+  // Update user profile
+  updateProfile: publicProcedure
+    .input(z.object({
+      characterName: z.string(),
+      level: z.number().int().optional(),
+      class: z.string().optional(),
+      bio: z.string().optional(),
+      avatar: z.string().optional(),
+      experience: z.number().int().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+
+      const user = await db
+        .select()
+        .from(users)
+        .where(eq(users.characterName, input.characterName))
+        .limit(1);
+
+      if (!user.length) throw new Error("User not found");
+
+      await db
+        .update(users)
+        .set({
+          level: input.level,
+          class: input.class,
+          bio: input.bio,
+          avatar: input.avatar,
+          experience: input.experience,
+        })
+        .where(eq(users.id, user[0].id));
+
+      return user[0];
+    }),
 });
 
-const createTaskSchema = z.object({
-  guildId: z.number(),
-  categoryId: z.number(),
-  title: z.string().min(1).max(256),
-  description: z.string().optional(),
-  taskType: z.enum(["quest", "catch", "profession", "daily", "custom"]),
-  priority: z.enum(["low", "medium", "high", "critical"]),
-  dueDate: z.date().optional(),
-  dueTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  assignedToId: z.number().optional(),
-  tags: z.array(z.string()).optional(),
-});
+/**
+ * Guilds router
+ */
+export const guildsRouter = router({
+  // Create guild
+  create: publicProcedure
+    .input(z.object({
+      name: z.string().min(1).max(128),
+      description: z.string().optional(),
+      leaderCharacterName: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
 
-const updateTaskSchema = z.object({
-  id: z.number(),
-  title: z.string().optional(),
-  description: z.string().optional(),
-  status: z.enum(["todo", "in_progress", "completed", "archived"]).optional(),
-  priority: z.enum(["low", "medium", "high", "critical"]).optional(),
-  dueDate: z.date().optional(),
-  dueTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  assignedToId: z.number().optional(),
-  tags: z.array(z.string()).optional(),
-});
+      const leader = await db
+        .select()
+        .from(users)
+        .where(eq(users.characterName, input.leaderCharacterName))
+        .limit(1);
 
-const createAlarmSchema = z.object({
-  guildId: z.number(),
-  title: z.string().min(1).max(256),
-  description: z.string().optional(),
-  alarmType: z.enum(["boss_respawn", "invasion", "cooldown", "event", "custom"]),
-  triggerDateTime: z.date(),
-  notifyBefore: z.number().optional(),
-  isRecurring: z.boolean().optional(),
-  recurringPattern: z.string().optional(),
-});
+      if (!leader.length) throw new Error("Leader not found");
 
-// ============ GUILD ROUTER ============
-
-const guildRouter = router({
-  create: protectedProcedure
-    .input(createGuildSchema)
-    .mutation(async ({ ctx, input }) => {
-      const guildId = await db.createGuild({
+      const result = await db.insert(guilds).values({
         name: input.name,
         description: input.description,
-        ownerId: ctx.user.id,
+        leaderId: leader[0].id,
+        inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
       });
 
-      return { guildId, success: true };
+      // Add leader as member
+      await db.insert(guildMembers).values({
+        guildId: Number(result.insertId),
+        userId: leader[0].id,
+        role: "leader",
+      });
+
+      return { id: result.insertId, ...input };
     }),
 
-  list: protectedProcedure.query(async ({ ctx }) => {
-    const result = await db.getUserGuilds(ctx.user.id);
-    return result.map((item: any) => item.guilds);
-  }),
-
-  getById: protectedProcedure
-    .input(z.object({ id: z.number() }))
+  // List user's guilds
+  listByUser: publicProcedure
+    .input(z.object({ characterName: z.string() }))
     .query(async ({ input }) => {
-      return await db.getGuildById(input.id);
+      const db = await getDb();
+      if (!db) return [];
+
+      const user = await db
+        .select()
+        .from(users)
+        .where(eq(users.characterName, input.characterName))
+        .limit(1);
+
+      if (!user.length) return [];
+
+      const userGuilds = await db
+        .select()
+        .from(guildMembers)
+        .where(eq(guildMembers.userId, user[0].id));
+
+      if (userGuilds.length === 0) return [];
+
+      return await db
+        .select()
+        .from(guilds)
+        .where(eq(guilds.id, userGuilds[0].guildId));
     }),
 
-  getMembers: protectedProcedure
+  // Get guild details
+  getById: publicProcedure
     .input(z.object({ guildId: z.number() }))
     .query(async ({ input }) => {
-      const result = await db.getGuildMembers(input.guildId);
-      return result.map((item: any) => ({
-        member: item.guildMembers,
-        user: item.users,
-      }));
+      const db = await getDb();
+      if (!db) return null;
+
+      return await db
+        .select()
+        .from(guilds)
+        .where(eq(guilds.id, input.guildId))
+        .limit(1)
+        .then(r => r[0]);
     }),
 
-  addMember: protectedProcedure
-    .input(z.object({ guildId: z.number(), userId: z.number() }))
-    .mutation(async ({ input, ctx }) => {
-      // Check if user is leader/officer
-      const guild = await db.getGuildById(input.guildId);
-      if (!guild || guild.ownerId !== ctx.user.id) {
-        throw new TRPCError({ code: "FORBIDDEN" });
-      }
-
-      await db.addGuildMember(input.guildId, input.userId);
-      return { success: true };
-    }),
-
-  getStats: protectedProcedure
+  // Get guild members
+  getMembers: publicProcedure
     .input(z.object({ guildId: z.number() }))
     .query(async ({ input }) => {
-      return await db.getGuildStats(input.guildId);
+      const db = await getDb();
+      if (!db) return [];
+
+      return await db
+        .select()
+        .from(guildMembers)
+        .where(eq(guildMembers.guildId, input.guildId));
     }),
 });
 
-// ============ TASK ROUTER ============
+/**
+ * Tasks router
+ */
+export const tasksRouter = router({
+  // Create task
+  create: publicProcedure
+    .input(z.object({
+      guildId: z.number(),
+      categoryId: z.number(),
+      title: z.string(),
+      description: z.string().optional(),
+      priority: z.enum(["low", "medium", "high", "critical"]),
+      createdByCharacterName: z.string(),
+      dueDate: z.string().optional(),
+      dueTime: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
 
-const taskRouter = router({
-  create: protectedProcedure
-    .input(createTaskSchema)
-    .mutation(async ({ ctx, input }) => {
-      const taskId = await db.createTask({
+      const creator = await db
+        .select()
+        .from(users)
+        .where(eq(users.characterName, input.createdByCharacterName))
+        .limit(1);
+
+      if (!creator.length) throw new Error("Creator not found");
+
+      const result = await db.insert(tasks).values({
         guildId: input.guildId,
         categoryId: input.categoryId,
-        createdById: ctx.user.id,
         title: input.title,
         description: input.description,
-        taskType: input.taskType,
         priority: input.priority,
-        dueDate: input.dueDate,
+        createdBy: creator[0].id,
+        dueDate: input.dueDate ? new Date(input.dueDate) : null,
         dueTime: input.dueTime,
-        assignedToId: input.assignedToId,
-        tags: input.tags,
       });
 
-      // Notify assigned user if applicable
-      if (input.assignedToId) {
-        await db.createNotification({
-          userId: input.assignedToId,
-          guildId: input.guildId,
-          title: "Nova tarefa atribuída",
-          message: `Você foi atribuído à tarefa: ${input.title}`,
-          notificationType: "task_assigned",
-          relatedTaskId: Number(taskId),
-        });
-      }
-
-      return { taskId, success: true };
+      return { id: result.insertId, ...input };
     }),
 
-  listByGuild: protectedProcedure
-    .input(
-      z.object({
-        guildId: z.number(),
-        status: z.string().optional(),
-        categoryId: z.number().optional(),
-        priority: z.string().optional(),
-        assignedToId: z.number().optional(),
-      })
-    )
-    .query(async ({ input }) => {
-      return await db.getTasksByGuild(input.guildId, {
-        status: input.status,
-        categoryId: input.categoryId,
-        priority: input.priority,
-        assignedToId: input.assignedToId,
-      });
-    }),
-
-  getById: protectedProcedure
-    .input(z.object({ id: z.number() }))
-    .query(async ({ input }) => {
-      return await db.getTaskById(input.id);
-    }),
-
-  update: protectedProcedure
-    .input(updateTaskSchema)
-    .mutation(async ({ input }) => {
-      await db.updateTask(input.id, {
-        title: input.title,
-        description: input.description,
-        status: input.status,
-        priority: input.priority,
-        dueDate: input.dueDate,
-        dueTime: input.dueTime,
-        assignedToId: input.assignedToId,
-        tags: input.tags,
-      });
-
-      return { success: true };
-    }),
-
-  complete: protectedProcedure
-    .input(z.object({ id: z.number(), guildId: z.number() }))
-    .mutation(async ({ ctx, input }) => {
-      const task = await db.getTaskById(input.id);
-      if (!task) throw new TRPCError({ code: "NOT_FOUND" });
-
-      await db.completeTask(input.id, ctx.user.id, input.guildId);
-
-      // Notify task creator
-      if (task.createdById !== ctx.user.id) {
-        await db.createNotification({
-          userId: task.createdById,
-          guildId: input.guildId,
-          title: "Tarefa concluída",
-          message: `A tarefa "${task.title}" foi concluída`,
-          notificationType: "task_completed",
-          relatedTaskId: input.id,
-        });
-      }
-
-      return { success: true };
-    }),
-
-  delete: protectedProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      await db.deleteTask(input.id);
-      return { success: true };
-    }),
-
-  getHistory: protectedProcedure
-    .input(z.object({ taskId: z.number() }))
-    .query(async ({ input }) => {
-      return await db.getTaskHistory(input.taskId);
-    }),
-});
-
-// ============ CATEGORY ROUTER ============
-
-const categoryRouter = router({
-  listByGuild: protectedProcedure
+  // List tasks by guild
+  listByGuild: publicProcedure
     .input(z.object({ guildId: z.number() }))
     .query(async ({ input }) => {
-      return await db.getCategoriesByGuild(input.guildId);
+      const db = await getDb();
+      if (!db) return [];
+
+      return await db
+        .select()
+        .from(tasks)
+        .where(eq(tasks.guildId, input.guildId))
+        .orderBy(desc(tasks.createdAt));
+    }),
+
+  // Update task status
+  updateStatus: publicProcedure
+    .input(z.object({
+      taskId: z.number(),
+      status: z.enum(["todo", "in_progress", "completed", "archived"]),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+
+      await db
+        .update(tasks)
+        .set({ status: input.status })
+        .where(eq(tasks.id, input.taskId));
+
+      return { success: true };
     }),
 });
 
-// ============ ALARM ROUTER ============
+/**
+ * Alarms router
+ */
+export const alarmsRouter = router({
+  // Create alarm
+  create: publicProcedure
+    .input(z.object({
+      guildId: z.number(),
+      type: z.enum(["boss_respawn", "invasion", "cooldown", "event", "custom"]),
+      title: z.string(),
+      description: z.string().optional(),
+      triggerTime: z.string(),
+      createdByCharacterName: z.string(),
+    }))
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
 
-const alarmRouter = router({
-  create: protectedProcedure
-    .input(createAlarmSchema)
-    .mutation(async ({ ctx, input }) => {
-      const alarmId = await db.createAlarm({
+      const creator = await db
+        .select()
+        .from(users)
+        .where(eq(users.characterName, input.createdByCharacterName))
+        .limit(1);
+
+      if (!creator.length) throw new Error("Creator not found");
+
+      const result = await db.insert(alarms).values({
         guildId: input.guildId,
-        createdById: ctx.user.id,
+        type: input.type,
         title: input.title,
         description: input.description,
-        alarmType: input.alarmType,
-        triggerDateTime: input.triggerDateTime,
-        notifyBefore: input.notifyBefore,
-        isRecurring: input.isRecurring,
-        recurringPattern: input.recurringPattern,
+        triggerTime: new Date(input.triggerTime),
+        createdBy: creator[0].id,
       });
 
-      return { alarmId, success: true };
+      return { id: result.insertId, ...input };
     }),
 
-  listByGuild: protectedProcedure
+  // List active alarms
+  listActive: publicProcedure
     .input(z.object({ guildId: z.number() }))
     .query(async ({ input }) => {
-      return await db.getAlarmsByGuild(input.guildId);
-    }),
+      const db = await getDb();
+      if (!db) return [];
 
-  getUpcoming: protectedProcedure
-    .input(z.object({ minutesAhead: z.number().optional() }))
-    .query(async ({ input }) => {
-      return await db.getUpcomingAlarms(input.minutesAhead);
-    }),
-});
-
-// ============ NOTIFICATION ROUTER ============
-
-const notificationRouter = router({
-  list: protectedProcedure
-    .input(z.object({ unreadOnly: z.boolean().optional() }))
-    .query(async ({ ctx, input }) => {
-      return await db.getUserNotifications(ctx.user.id, input.unreadOnly);
-    }),
-
-  markAsRead: protectedProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      await db.markNotificationAsRead(input.id);
-      return { success: true };
+      return await db
+        .select()
+        .from(alarms)
+        .where(and(
+          eq(alarms.guildId, input.guildId),
+          eq(alarms.isActive, true)
+        ))
+        .orderBy(desc(alarms.triggerTime));
     }),
 });
 
-// ============ TAG ROUTER ============
-
-const tagRouter = router({
-  listByGuild: protectedProcedure
+/**
+ * Dashboard router
+ */
+export const dashboardRouter = router({
+  // Get guild statistics
+  getStats: publicProcedure
     .input(z.object({ guildId: z.number() }))
     .query(async ({ input }) => {
-      return await db.getTagsByGuild(input.guildId);
-    }),
-});
+      const db = await getDb();
+      if (!db) return null;
 
-// ============ MAIN APP ROUTER ============
+      const allTasks = await db
+        .select()
+        .from(tasks)
+        .where(eq(tasks.guildId, input.guildId));
 
-export const appRouter = router({
-  system: systemRouter,
-  auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
-    logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+      const completed = allTasks.filter(t => t.status === "completed").length;
+      const inProgress = allTasks.filter(t => t.status === "in_progress").length;
+      const todo = allTasks.filter(t => t.status === "todo").length;
+
       return {
-        success: true,
-      } as const;
+        totalTasks: allTasks.length,
+        completedTasks: completed,
+        inProgressTasks: inProgress,
+        todoTasks: todo,
+        completionRate: allTasks.length > 0 ? Math.round((completed / allTasks.length) * 100) : 0,
+      };
     }),
-  }),
 
-  guild: guildRouter,
-  task: taskRouter,
-  category: categoryRouter,
-  alarm: alarmRouter,
-  notification: notificationRouter,
-  tag: tagRouter,
+  // Get user statistics
+  getUserStats: publicProcedure
+    .input(z.object({ characterName: z.string() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) return null;
+
+      const user = await db
+        .select()
+        .from(users)
+        .where(eq(users.characterName, input.characterName))
+        .limit(1);
+
+      if (!user.length) return null;
+
+      const userTasks = await db
+        .select()
+        .from(tasks)
+        .where(eq(tasks.assignedTo, user[0].id));
+
+      const completed = userTasks.filter(t => t.status === "completed").length;
+
+      return {
+        characterName: user[0].characterName,
+        level: user[0].level,
+        experience: user[0].experience,
+        totalTasksAssigned: userTasks.length,
+        completedTasks: completed,
+        class: user[0].class,
+      };
+    }),
+});
+
+/**
+ * Main app router
+ */
+export const appRouter = router({
+  auth: authRouter,
+  guilds: guildsRouter,
+  tasks: tasksRouter,
+  alarms: alarmsRouter,
+  dashboard: dashboardRouter,
 });
 
 export type AppRouter = typeof appRouter;
