@@ -14,28 +14,32 @@ import {
 import { relations } from "drizzle-orm";
 
 /**
- * Core user table backing auth flow.
- * Extended with guild and profile information.
+ * Users table - Identificação por nome de personagem (ex: Kooxh)
  */
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
-  openId: varchar("openId", { length: 64 }).notNull().unique(),
-  name: text("name"),
-  email: varchar("email", { length: 320 }),
-  loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
-  
-  // Guild profile
+  /** Nome do personagem - Identificador único (ex: Kooxh) */
+  characterName: varchar("characterName", { length: 64 }).notNull().unique(),
+  /** Nível do personagem */
+  level: int("level").default(1).notNull(),
+  /** Classe/Profissão do personagem */
+  class: varchar("class", { length: 64 }),
+  /** Experiência acumulada */
+  experience: int("experience").default(0).notNull(),
+  /** Bio/Descrição do personagem */
+  bio: text("bio"),
+  /** URL do avatar */
+  avatar: varchar("avatar", { length: 500 }),
+  /** Guilda principal */
   mainGuildId: int("mainGuildId"),
-  profileBio: text("profileBio"),
-  profileLevel: int("profileLevel").default(1),
-  profileExperience: int("profileExperience").default(0),
   
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
 }, (table) => ({
-  mainGuildIdIdx: index("mainGuildId_idx").on(table.mainGuildId),
+  characterNameIdx: index("idx_character_name").on(table.characterName),
+  mainGuildIdIdx: index("idx_main_guild_id").on(table.mainGuildId),
+  createdAtIdx: index("idx_created_at").on(table.createdAt),
 }));
 
 export type User = typeof users.$inferSelect;
@@ -48,191 +52,135 @@ export const guilds = mysqlTable("guilds", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 128 }).notNull(),
   description: text("description"),
-  ownerId: int("ownerId").notNull(),
-  
-  // Guild settings
+  leaderId: int("leaderId").notNull(),
+  inviteCode: varchar("inviteCode", { length: 32 }).unique(),
   maxMembers: int("maxMembers").default(50),
-  isPublic: boolean("isPublic").default(true),
-  joinCode: varchar("joinCode", { length: 32 }).unique(),
-  
-  // Guild stats
-  totalTasksCompleted: int("totalTasksCompleted").default(0),
-  totalMembers: int("totalMembers").default(1),
-  
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
-  ownerIdIdx: index("ownerId_idx").on(table.ownerId),
+  leaderIdIdx: index("idx_leader_id").on(table.leaderId),
+  inviteCodeIdx: index("idx_invite_code").on(table.inviteCode),
 }));
 
 export type Guild = typeof guilds.$inferSelect;
 export type InsertGuild = typeof guilds.$inferInsert;
 
 /**
- * Guild members with roles and permissions
+ * Guild members with roles
  */
 export const guildMembers = mysqlTable("guildMembers", {
   id: int("id").autoincrement().primaryKey(),
   guildId: int("guildId").notNull(),
   userId: int("userId").notNull(),
-  
-  // Member role and permissions
-  memberRole: mysqlEnum("memberRole", ["leader", "officer", "member"]).default("member").notNull(),
-  canEditTasks: boolean("canEditTasks").default(false),
-  canDeleteTasks: boolean("canDeleteTasks").default(false),
-  canManageMembers: boolean("canManageMembers").default(false),
-  canCreateAlarms: boolean("canCreateAlarms").default(false),
-  
-  // Member stats
-  tasksCompleted: int("tasksCompleted").default(0),
+  role: mysqlEnum("role", ["leader", "officer", "member"]).default("member").notNull(),
   joinedAt: timestamp("joinedAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
-  guildIdIdx: index("guildId_idx").on(table.guildId),
-  userIdIdx: index("userId_idx").on(table.userId),
+  guildIdIdx: index("idx_guild_id").on(table.guildId),
+  userIdIdx: index("idx_user_id").on(table.userId),
+  uniqueMember: index("idx_guild_user").on(table.guildId, table.userId),
 }));
 
 export type GuildMember = typeof guildMembers.$inferSelect;
 export type InsertGuildMember = typeof guildMembers.$inferInsert;
 
 /**
- * Task categories/columns for Kanban board
+ * Task categories (Quest, Catch, Profession, Daily, Custom)
  */
 export const taskCategories = mysqlTable("taskCategories", {
   id: int("id").autoincrement().primaryKey(),
-  guildId: int("guildId").notNull(),
   name: varchar("name", { length: 64 }).notNull(),
-  displayName: varchar("displayName", { length: 128 }).notNull(),
   description: text("description"),
-  
-  // Kanban column settings
-  color: varchar("color", { length: 7 }).default("#6366f1"), // hex color
-  icon: varchar("icon", { length: 32 }).default("list"), // lucide icon name
-  position: int("position").default(0),
-  isDefault: boolean("isDefault").default(false),
-  
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  color: varchar("color", { length: 7 }).default("#6366f1"),
+  icon: varchar("icon", { length: 64 }),
 }, (table) => ({
-  guildIdIdx: index("guildId_idx").on(table.guildId),
+  nameIdx: index("idx_category_name").on(table.name),
 }));
 
 export type TaskCategory = typeof taskCategories.$inferSelect;
 export type InsertTaskCategory = typeof taskCategories.$inferInsert;
 
 /**
- * Tasks/Quests for Kanban board
- * Supports Quests, Catch, Profissões, Tasks Diárias (Brotherhood/Danger Room)
+ * Tasks/Quests
  */
 export const tasks = mysqlTable("tasks", {
   id: int("id").autoincrement().primaryKey(),
   guildId: int("guildId").notNull(),
   categoryId: int("categoryId").notNull(),
-  createdById: int("createdById").notNull(),
-  
-  // Task info
-  title: varchar("title", { length: 256 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
-  taskType: mysqlEnum("taskType", ["quest", "catch", "profession", "daily", "custom"]).default("custom").notNull(),
-  
-  // Priority and status
   priority: mysqlEnum("priority", ["low", "medium", "high", "critical"]).default("medium").notNull(),
   status: mysqlEnum("status", ["todo", "in_progress", "completed", "archived"]).default("todo").notNull(),
-  
-  // Timing
+  assignedTo: int("assignedTo"),
   dueDate: datetime("dueDate"),
   dueTime: varchar("dueTime", { length: 5 }), // HH:MM format
-  estimatedHours: decimal("estimatedHours", { precision: 5, scale: 2 }),
-  
-  // Assignment
-  assignedToId: int("assignedToId"),
-  
-  // Completion tracking
-  completedAt: timestamp("completedAt"),
-  completedById: int("completedById"),
-  
-  // Tags and metadata
-  tags: json("tags").$type<string[]>().default([]),
-  metadata: json("metadata").$type<Record<string, unknown>>().default({}),
-  
+  completedAt: datetime("completedAt"),
+  createdBy: int("createdBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
-  guildIdIdx: index("guildId_idx").on(table.guildId),
-  categoryIdIdx: index("categoryId_idx").on(table.categoryId),
-  createdByIdIdx: index("createdById_idx").on(table.createdById),
-  assignedToIdIdx: index("assignedToId_idx").on(table.assignedToId),
-  statusIdx: index("status_idx").on(table.status),
+  guildIdIdx: index("idx_task_guild_id").on(table.guildId),
+  categoryIdIdx: index("idx_task_category_id").on(table.categoryId),
+  assignedToIdx: index("idx_assigned_to").on(table.assignedTo),
+  statusIdx: index("idx_task_status").on(table.status),
+  dueDateIdx: index("idx_due_date").on(table.dueDate),
 }));
 
 export type Task = typeof tasks.$inferSelect;
 export type InsertTask = typeof tasks.$inferInsert;
 
 /**
- * Task history for tracking changes and completion statistics
+ * Task tags for organization
  */
-export const taskHistory = mysqlTable("taskHistory", {
+export const tags = mysqlTable("tags", {
   id: int("id").autoincrement().primaryKey(),
-  taskId: int("taskId").notNull(),
   guildId: int("guildId").notNull(),
-  
-  // History tracking
-  action: mysqlEnum("action", ["created", "updated", "completed", "archived", "reassigned"]).notNull(),
-  changedById: int("changedById").notNull(),
-  
-  // Changes
-  previousStatus: mysqlEnum("previousStatus", ["todo", "in_progress", "completed", "archived"]),
-  newStatus: mysqlEnum("newStatus", ["todo", "in_progress", "completed", "archived"]),
-  
-  // Metadata
-  notes: text("notes"),
-  metadata: json("metadata").$type<Record<string, unknown>>().default({}),
-  
+  name: varchar("name", { length: 64 }).notNull(),
+  color: varchar("color", { length: 7 }).default("#8b5cf6"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (table) => ({
-  taskIdIdx: index("taskId_idx").on(table.taskId),
-  guildIdIdx: index("guildId_idx").on(table.guildId),
-  changedByIdIdx: index("changedById_idx").on(table.changedById),
+  guildIdIdx: index("idx_tag_guild_id").on(table.guildId),
+  nameIdx: index("idx_tag_name").on(table.name),
 }));
 
-export type TaskHistory = typeof taskHistory.$inferSelect;
-export type InsertTaskHistory = typeof taskHistory.$inferInsert;
+export type Tag = typeof tags.$inferSelect;
+export type InsertTag = typeof tags.$inferInsert;
 
 /**
- * Alarms for game events (boss respawn, invasions, cooldowns)
+ * Task-Tag relationship
+ */
+export const taskTags = mysqlTable("taskTags", {
+  taskId: int("taskId").notNull(),
+  tagId: int("tagId").notNull(),
+}, (table) => ({
+  taskIdIdx: index("idx_task_tags_task_id").on(table.taskId),
+  tagIdIdx: index("idx_task_tags_tag_id").on(table.tagId),
+}));
+
+export type TaskTag = typeof taskTags.$inferSelect;
+
+/**
+ * Alarms for timed events (Boss Respawn, Invasion, Cooldown, etc)
  */
 export const alarms = mysqlTable("alarms", {
   id: int("id").autoincrement().primaryKey(),
   guildId: int("guildId").notNull(),
-  createdById: int("createdById").notNull(),
-  
-  // Alarm info
-  title: varchar("title", { length: 256 }).notNull(),
+  taskId: int("taskId"),
+  type: mysqlEnum("type", ["boss_respawn", "invasion", "cooldown", "event", "custom"]).default("custom").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
   description: text("description"),
-  alarmType: mysqlEnum("alarmType", ["boss_respawn", "invasion", "cooldown", "event", "custom"]).default("custom").notNull(),
-  
-  // Timing
-  triggerDateTime: datetime("triggerDateTime").notNull(),
-  notifyBefore: int("notifyBefore").default(300), // seconds before event
-  
-  // Status
-  isActive: boolean("isActive").default(true),
+  triggerTime: datetime("triggerTime").notNull(),
+  notifyBefore: int("notifyBefore").default(300), // seconds before
   isRecurring: boolean("isRecurring").default(false),
-  recurringPattern: varchar("recurringPattern", { length: 64 }), // cron-like pattern
-  
-  // Notification
-  notifyMembers: boolean("notifyMembers").default(true),
-  notificationsSent: int("notificationsSent").default(0),
-  
-  // Metadata
-  metadata: json("metadata").$type<Record<string, unknown>>().default({}),
-  
+  recurringPattern: varchar("recurringPattern", { length: 64 }), // cron-like
+  isActive: boolean("isActive").default(true),
+  createdBy: int("createdBy").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
-  guildIdIdx: index("guildId_idx").on(table.guildId),
-  createdByIdIdx: index("createdById_idx").on(table.createdById),
-  triggerDateTimeIdx: index("triggerDateTime_idx").on(table.triggerDateTime),
+  guildIdIdx: index("idx_alarm_guild_id").on(table.guildId),
+  taskIdIdx: index("idx_alarm_task_id").on(table.taskId),
+  triggerTimeIdx: index("idx_trigger_time").on(table.triggerTime),
+  isActiveIdx: index("idx_alarm_is_active").on(table.isActive),
 }));
 
 export type Alarm = typeof alarms.$inferSelect;
@@ -244,135 +192,154 @@ export type InsertAlarm = typeof alarms.$inferInsert;
 export const notifications = mysqlTable("notifications", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
-  guildId: int("guildId"),
-  
-  // Notification content
-  title: varchar("title", { length: 256 }).notNull(),
+  alarmId: int("alarmId"),
+  title: varchar("title", { length: 255 }).notNull(),
   message: text("message"),
-  notificationType: mysqlEnum("notificationType", ["task_assigned", "task_completed", "alarm_triggered", "member_joined", "custom"]).default("custom").notNull(),
-  
-  // Status
+  type: mysqlEnum("type", ["alarm", "task_assigned", "task_completed", "guild_invite", "system"]).default("system").notNull(),
   isRead: boolean("isRead").default(false),
-  readAt: timestamp("readAt"),
-  
-  // Metadata
-  relatedTaskId: int("relatedTaskId"),
-  relatedAlarmId: int("relatedAlarmId"),
-  metadata: json("metadata").$type<Record<string, unknown>>().default({}),
-  
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (table) => ({
-  userIdIdx: index("userId_idx").on(table.userId),
-  guildIdIdx: index("guildId_idx").on(table.guildId),
-  isReadIdx: index("isRead_idx").on(table.isRead),
+  userIdIdx: index("idx_notification_user_id").on(table.userId),
+  alarmIdIdx: index("idx_notification_alarm_id").on(table.alarmId),
+  isReadIdx: index("idx_is_read").on(table.isRead),
 }));
 
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = typeof notifications.$inferInsert;
 
 /**
- * Tags for task organization
+ * Task history for audit trail
  */
-export const tags = mysqlTable("tags", {
+export const taskHistory = mysqlTable("taskHistory", {
   id: int("id").autoincrement().primaryKey(),
-  guildId: int("guildId").notNull(),
-  name: varchar("name", { length: 64 }).notNull(),
-  color: varchar("color", { length: 7 }).default("#6366f1"),
-  
+  taskId: int("taskId").notNull(),
+  action: mysqlEnum("action", ["created", "updated", "status_changed", "assigned", "completed", "deleted"]).notNull(),
+  changedBy: int("changedBy").notNull(),
+  oldValues: json("oldValues"),
+  newValues: json("newValues"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
-  guildIdIdx: index("guildId_idx").on(table.guildId),
+  taskIdIdx: index("idx_history_task_id").on(table.taskId),
+  changedByIdx: index("idx_changed_by").on(table.changedBy),
 }));
 
-export type Tag = typeof tags.$inferSelect;
-export type InsertTag = typeof tags.$inferInsert;
+export type TaskHistory = typeof taskHistory.$inferSelect;
+export type InsertTaskHistory = typeof taskHistory.$inferInsert;
 
 /**
- * Guild statistics and metrics
+ * Guild statistics
  */
 export const guildStats = mysqlTable("guildStats", {
   id: int("id").autoincrement().primaryKey(),
   guildId: int("guildId").notNull().unique(),
-  
-  // Statistics
   totalTasks: int("totalTasks").default(0),
   completedTasks: int("completedTasks").default(0),
-  inProgressTasks: int("inProgressTasks").default(0),
-  
-  // Member stats
-  activeMembers: int("activeMembers").default(0),
+  activeTasks: int("activeTasks").default(0),
   totalMembers: int("totalMembers").default(0),
-  
-  // Engagement
-  tasksCompletedThisWeek: int("tasksCompletedThisWeek").default(0),
-  tasksCompletedThisMonth: int("tasksCompletedThisMonth").default(0),
-  
-  // Metadata
-  metadata: json("metadata").$type<Record<string, unknown>>().default({}),
-  
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (table) => ({
-  guildIdIdx: index("guildId_idx").on(table.guildId),
+  guildIdIdx: index("idx_stats_guild_id").on(table.guildId),
 }));
 
 export type GuildStats = typeof guildStats.$inferSelect;
 export type InsertGuildStats = typeof guildStats.$inferInsert;
 
-/**
- * Relations for Drizzle ORM
- */
+// Relations
 export const usersRelations = relations(users, ({ many, one }) => ({
   guilds: many(guilds),
   guildMembers: many(guildMembers),
-  createdTasks: many(tasks, { relationName: "createdBy" }),
-  assignedTasks: many(tasks, { relationName: "assignedTo" }),
-  createdAlarms: many(alarms),
+  tasks: many(tasks),
+  alarms: many(alarms),
   notifications: many(notifications),
   taskHistory: many(taskHistory),
 }));
 
 export const guildsRelations = relations(guilds, ({ many, one }) => ({
-  owner: one(users, { fields: [guilds.ownerId], references: [users.id] }),
+  leader: one(users, {
+    fields: [guilds.leaderId],
+    references: [users.id],
+  }),
   members: many(guildMembers),
   tasks: many(tasks),
-  categories: many(taskCategories),
-  alarms: many(alarms),
   tags: many(tags),
+  alarms: many(alarms),
   stats: one(guildStats),
-  notifications: many(notifications),
 }));
 
 export const guildMembersRelations = relations(guildMembers, ({ one }) => ({
-  guild: one(guilds, { fields: [guildMembers.guildId], references: [guilds.id] }),
-  user: one(users, { fields: [guildMembers.userId], references: [users.id] }),
+  guild: one(guilds, {
+    fields: [guildMembers.guildId],
+    references: [guilds.id],
+  }),
+  user: one(users, {
+    fields: [guildMembers.userId],
+    references: [users.id],
+  }),
 }));
 
 export const tasksRelations = relations(tasks, ({ one, many }) => ({
-  guild: one(guilds, { fields: [tasks.guildId], references: [guilds.id] }),
-  category: one(taskCategories, { fields: [tasks.categoryId], references: [taskCategories.id] }),
-  createdBy: one(users, { fields: [tasks.createdById], references: [users.id], relationName: "createdBy" }),
-  assignedTo: one(users, { fields: [tasks.assignedToId], references: [users.id], relationName: "assignedTo" }),
-  completedBy: one(users, { fields: [tasks.completedById], references: [users.id] }),
+  guild: one(guilds, {
+    fields: [tasks.guildId],
+    references: [guilds.id],
+  }),
+  category: one(taskCategories, {
+    fields: [tasks.categoryId],
+    references: [taskCategories.id],
+  }),
+  assignee: one(users, {
+    fields: [tasks.assignedTo],
+    references: [users.id],
+  }),
+  creator: one(users, {
+    fields: [tasks.createdBy],
+    references: [users.id],
+  }),
+  tags: many(taskTags),
   history: many(taskHistory),
 }));
 
-export const taskCategoriesRelations = relations(taskCategories, ({ one, many }) => ({
-  guild: one(guilds, { fields: [taskCategories.guildId], references: [guilds.id] }),
-  tasks: many(tasks),
+export const tagsRelations = relations(tags, ({ one, many }) => ({
+  guild: one(guilds, {
+    fields: [tags.guildId],
+    references: [guilds.id],
+  }),
+  tasks: many(taskTags),
 }));
 
 export const alarmsRelations = relations(alarms, ({ one, many }) => ({
-  guild: one(guilds, { fields: [alarms.guildId], references: [guilds.id] }),
-  createdBy: one(users, { fields: [alarms.createdById], references: [users.id] }),
+  guild: one(guilds, {
+    fields: [alarms.guildId],
+    references: [guilds.id],
+  }),
+  task: one(tasks, {
+    fields: [alarms.taskId],
+    references: [tasks.id],
+  }),
+  creator: one(users, {
+    fields: [alarms.createdBy],
+    references: [users.id],
+  }),
   notifications: many(notifications),
 }));
 
-export const tagsRelations = relations(tags, ({ one }) => ({
-  guild: one(guilds, { fields: [tags.guildId], references: [guilds.id] }),
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  user: one(users, {
+    fields: [notifications.userId],
+    references: [users.id],
+  }),
+  alarm: one(alarms, {
+    fields: [notifications.alarmId],
+    references: [alarms.id],
+  }),
 }));
 
-export const guildStatsRelations = relations(guildStats, ({ one }) => ({
-  guild: one(guilds, { fields: [guildStats.guildId], references: [guilds.id] }),
+export const taskHistoryRelations = relations(taskHistory, ({ one }) => ({
+  task: one(tasks, {
+    fields: [taskHistory.taskId],
+    references: [tasks.id],
+  }),
+  changedByUser: one(users, {
+    fields: [taskHistory.changedBy],
+    references: [users.id],
+  }),
 }));
